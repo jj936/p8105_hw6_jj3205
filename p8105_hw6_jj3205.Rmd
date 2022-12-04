@@ -87,3 +87,87 @@ weather_df %>%
 As with $r^2$, this distribution is somewhat skewed and has some outliers. 
 
 ## Problem 2
+
+```{r message = FALSE, warning = FALSE}
+homicide_df = 
+  read_csv("https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv", na = c("", "NA", "Unknown")) %>% 
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    victim_age = as.numeric(victim_age),
+    resolution = case_when(
+      disposition == "Closed without arrest" ~ 0,
+      disposition == "Open/No arrest"        ~ 0,
+      disposition == "Closed by arrest"      ~ 1)
+  ) %>% 
+  filter(
+    victim_race %in% c("White", "Black"),
+    city_state != "Tulsa, AL") %>% 
+  select(city_state, resolution, victim_age, victim_race, victim_sex)
+```
+
+Start with Baltimore, MD.
+
+
+```{r}
+baltimore_df =
+  homicide_df %>% 
+  filter(city_state == "Baltimore, MD")
+glm(resolution ~ victim_age + victim_race + victim_sex, 
+    data = baltimore_df,
+    family = binomial()) %>% 
+  broom::tidy() %>% 
+  mutate(
+    OR = exp(estimate), 
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error),
+    p_val = rstatix::p_format(p.value, digits = 2)) %>% 
+  select(term, OR, CI_lower,CI_upper, p_val) %>% 
+  mutate(term = str_replace(term, "victim_age", "Victim age"),
+         term = str_replace(term, "victim_race", "Victim Race: "),
+         term = str_replace(term, "victim_sex", "Victim Sex: ")) %>% 
+  knitr::kable(digits = 3, align = "lccc", 
+               col.names = c("Term", "Estimated adjusted OR", "CI lower bound", "CI upper bound", "p-value"))
+```
+
+For the city of Baltimore, MD, the homicides whose victim is male are significantly less like to be resolved than those whose victim is female.
+
+
+```{r}
+models_results_df = 
+  homicide_df %>% 
+  nest(data = -city_state) %>% 
+  mutate(
+    models = 
+      map(.x = data, ~glm(resolution ~ victim_age + victim_race + victim_sex, data = .x, family = binomial())),
+    results = map(models, broom::tidy)
+  ) %>% 
+  select(city_state, results) %>% 
+  unnest(results) %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error),
+    p_val = rstatix::p_format(p.value, digits = 2)
+  ) %>% 
+  filter(term == "victim_sexMale") %>% 
+  select(city_state, OR, CI_lower,CI_upper, p_val) 
+models_results_df %>% 
+  knitr::kable(digits = 3, align = "llccc", col.names = c("City", "Estimated adjusted OR", "CI lower bound", "CI upper bound", "p-value"))
+```
+
+Here is a plot of estimated ORs and CIs for each city. 
+
+
+```{r}
+models_results_df %>% 
+  mutate(city_state = fct_reorder(city_state, OR)) %>% 
+  ggplot(aes(x = city_state, y = OR)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "City", y = "Estimated OR with CI")
+```
+
+It shown that odds ratios are lower than 1 in most cities, indicating that it is less often for homicides in which the victim is male to be resolved by arrest.
+
+
